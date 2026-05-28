@@ -41,7 +41,10 @@
         body.has-bg #keyboard-container div.bg-navy-700,
         body.has-bg > .h-16,
         body.has-bg #btn-open-library,
-        body.has-bg #bind-overlay > div {
+        body.has-bg #bind-overlay > div,
+        body.has-bg #presets-bar button,
+        body.has-bg #preset-tabs button,
+        body.has-bg #preset-modal > div {
             background-color: rgba(0, 0, 0, 0.45) !important;
             border-color: rgba(255, 255, 255, 0.2) !important;
         }
@@ -56,8 +59,18 @@
 
     <!-- Main View -->
     <div id="main-view" class="flex-1 flex flex-col items-center justify-center p-4 relative w-full max-w-6xl mx-auto">
-        <h1 id="main-title" class="text-3xl font-bold text-navy-200 mb-8 px-6 py-2 rounded border border-transparent transition-colors">Soundboard</h1>
+        <h1 id="main-title" class="text-3xl font-bold text-navy-200 mb-6 px-6 py-2 rounded border border-transparent transition-colors">Soundboard</h1>
         
+        <!-- Presets Row -->
+        <div id="presets-bar" class="w-full max-w-4xl flex items-center justify-between mb-4 gap-4 px-2">
+            <div class="flex items-center gap-1.5 overflow-x-auto py-1 scrollbar-none" id="preset-tabs">
+                <!-- Preset tabs loaded via JS -->
+            </div>
+            <button id="btn-add-preset" class="px-3 py-1.5 bg-navy-800 hover:bg-navy-700 text-sm border border-navy-700 rounded text-navy-200 shrink-0 font-semibold flex items-center gap-1 transition-colors">
+                <span>+</span><span>Add Preset</span>
+            </button>
+        </div>
+
         <div id="keyboard-container" class="flex flex-col gap-1.5 bg-navy-900 p-6 rounded border border-navy-800">
             <!-- Keyboard rows will be generated here -->
         </div>
@@ -128,15 +141,30 @@
         </div>
     </div>
 
+    <!-- Edit Preset Modal -->
+    <div id="preset-modal" class="hidden absolute inset-0 bg-navy-950/90 z-50 flex items-center justify-center">
+        <div class="bg-navy-900 p-6 rounded border border-navy-700 w-80 shadow-lg">
+            <h3 class="text-lg font-bold text-navy-100 mb-4 text-center">Edit Preset</h3>
+            <input type="text" id="preset-name-input" class="w-full bg-navy-950 border border-navy-700 rounded px-3 py-2 text-navy-100 mb-4 focus:outline-none focus:border-blue-500" placeholder="Preset Name">
+            <div class="flex gap-2 justify-end">
+                <button id="btn-delete-preset" class="px-3 py-1.5 bg-red-900/50 hover:bg-red-900/80 border border-red-800 text-red-200 rounded text-sm font-semibold transition-colors">Delete</button>
+                <button id="btn-cancel-preset" class="px-3 py-1.5 bg-navy-800 hover:bg-navy-700 border border-navy-700 rounded text-navy-200 text-sm font-semibold transition-colors">Cancel</button>
+                <button id="btn-save-preset" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-white text-sm font-semibold transition-colors">Save</button>
+            </div>
+        </div>
+    </div>
+
     <script>
-        // --- Database Setup (IndexedDB for permanent client-side storage) ---
+        // --- Database Setup (IndexedDB with multi-store support for settings and presets) ---
         const DB_NAME = 'NavySoundboardDB';
         const STORE_NAME = 'sounds';
         const SETTINGS_STORE = 'settings';
+        const PRESETS_STORE = 'presets';
+        const DB_VERSION = 3;
 
         function openDB() {
             return new Promise((resolve, reject) => {
-                const request = indexedDB.open(DB_NAME, 2); // Bump version to 2 for settings store
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
                 request.onupgradeneeded = (e) => {
                     const db = e.target.result;
                     if (!db.objectStoreNames.contains(STORE_NAME)) {
@@ -144,6 +172,9 @@
                     }
                     if (!db.objectStoreNames.contains(SETTINGS_STORE)) {
                         db.createObjectStore(SETTINGS_STORE, { keyPath: 'id' });
+                    }
+                    if (!db.objectStoreNames.contains(PRESETS_STORE)) {
+                        db.createObjectStore(PRESETS_STORE, { keyPath: 'id' });
                     }
                 };
                 request.onsuccess = () => resolve(request.result);
@@ -211,6 +242,36 @@
             });
         }
 
+        async function savePreset(preset) {
+            const db = await openDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(PRESETS_STORE, 'readwrite');
+                tx.objectStore(PRESETS_STORE).put(preset);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        }
+
+        async function getPresets() {
+            const db = await openDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(PRESETS_STORE, 'readonly');
+                const req = tx.objectStore(PRESETS_STORE).getAll();
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+        }
+
+        async function deletePreset(id) {
+            const db = await openDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(PRESETS_STORE, 'readwrite');
+                tx.objectStore(PRESETS_STORE).delete(id);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        }
+
         // --- Keyboard Layout Data ---
         const kbLayout = [
             [
@@ -248,11 +309,14 @@
 
         // --- Application State ---
         let sounds = [];
+        let presets = [];
+        let activePresetId = null;
         let audioPlayers = {}; // Mapping { soundId: Audio }
         let state = {
             isLibraryOpen: false,
             bindingSoundId: null, // If set, we are listening for a key to bind
             lastPlayedSoundId: null, // Track the last played sound
+            editingPresetId: null // The preset currently being renamed/deleted
         };
 
         // --- Synchronized Marquee State Tracker ---
@@ -270,6 +334,10 @@
         const libraryView = document.getElementById('library-view');
         const bindOverlay = document.getElementById('bind-overlay');
         const bindTargetName = document.getElementById('bind-target-name');
+        const presetTabs = document.getElementById('preset-tabs');
+        const btnAddPreset = document.getElementById('btn-add-preset');
+        const presetModal = document.getElementById('preset-modal');
+        const presetNameInput = document.getElementById('preset-name-input');
 
         // --- Initialization ---
         async function init() {
@@ -300,11 +368,166 @@
 
         async function reloadData() {
             sounds = await getSounds();
+            let allPresets = await getPresets();
+            let activeId = await getSetting('activePresetId');
+
+            // Initialize presets if empty (Safe database setup/migration path)
+            if (allPresets.length === 0) {
+                const initialPreset = {
+                    id: 'preset-1',
+                    name: 'Preset 1',
+                    bindings: {}
+                };
+
+                // Migrate legacy key binds from old sound model to our centralized Preset 1 bindings
+                sounds.forEach(sound => {
+                    if (sound.key) {
+                        initialPreset.bindings[sound.key] = sound.id;
+                    }
+                });
+
+                await savePreset(initialPreset);
+                allPresets.push(initialPreset);
+                activeId = 'preset-1';
+                await saveSetting('activePresetId', activeId);
+            }
+
+            // Fallback for missing/deleted active preset index references
+            if (!activeId || !allPresets.some(p => p.id === activeId)) {
+                activeId = allPresets[0].id;
+                await saveSetting('activePresetId', activeId);
+            }
+
+            presets = allPresets;
+            activePresetId = activeId;
+
+            // Enable/Disable "Add Preset" depending on max limit (Max: 10 Presets)
+            if (presets.length >= 10) {
+                btnAddPreset.disabled = true;
+                btnAddPreset.classList.add('opacity-50', 'cursor-not-allowed');
+                btnAddPreset.title = "Maximum of 10 presets reached";
+            } else {
+                btnAddPreset.disabled = false;
+                btnAddPreset.classList.remove('opacity-50', 'cursor-not-allowed');
+                btnAddPreset.title = "";
+            }
+
+            renderPresetsBar();
             updateKeyboardVisuals();
             renderLibraryList();
         }
 
-        // --- DOM Rendering ---
+        // --- Presets Rendering & Events ---
+        function renderPresetsBar() {
+            presetTabs.innerHTML = '';
+            presets.forEach(preset => {
+                const isActive = preset.id === activePresetId;
+                const tab = document.createElement('div');
+                tab.className = `flex items-center gap-1 px-3 py-1.5 text-sm font-semibold rounded border transition-all cursor-pointer select-none shrink-0 
+                    ${isActive ? 'bg-blue-600 border-blue-500 text-white' : 'bg-navy-800 border-navy-700 text-navy-400 hover:bg-navy-700 hover:text-navy-200'}`;
+                
+                tab.innerHTML = `
+                    <span class="tab-label truncate max-w-[120px]">${preset.name}</span>
+                `;
+
+                if (isActive) {
+                    // Inject edit gear icon
+                    const editBtn = document.createElement('button');
+                    editBtn.className = "ml-1.5 text-blue-200 hover:text-white transition-colors focus:outline-none";
+                    editBtn.innerHTML = `
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                        </svg>
+                    `;
+                    editBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        openPresetModal(preset.id);
+                    });
+                    tab.appendChild(editBtn);
+                }
+
+                tab.addEventListener('click', () => switchPreset(preset.id));
+                presetTabs.appendChild(tab);
+            });
+        }
+
+        async function switchPreset(id) {
+            if (activePresetId === id) return;
+            activePresetId = id;
+            await saveSetting('activePresetId', id);
+            
+            // Stop playing audio assets before layout switch
+            stopAll();
+            await reloadData();
+        }
+
+        async function addNewPreset() {
+            if (presets.length >= 10) return;
+
+            const newId = `preset-${Date.now()}`;
+            const newPreset = {
+                id: newId,
+                name: `Preset ${presets.length + 1}`,
+                bindings: {}
+            };
+
+            await savePreset(newPreset);
+            await saveSetting('activePresetId', newId);
+            await reloadData();
+        }
+
+        function openPresetModal(presetId) {
+            const preset = presets.find(p => p.id === presetId);
+            if (!preset) return;
+
+            state.editingPresetId = presetId;
+            presetNameInput.value = preset.name;
+
+            // Hide delete option if this is the last remaining preset left
+            const deleteBtn = document.getElementById('btn-delete-preset');
+            if (presets.length <= 1) {
+                deleteBtn.classList.add('hidden');
+            } else {
+                deleteBtn.classList.remove('hidden');
+            }
+
+            presetModal.classList.remove('hidden');
+            presetNameInput.focus();
+        }
+
+        function closePresetModal() {
+            state.editingPresetId = null;
+            presetModal.classList.add('hidden');
+        }
+
+        async function savePresetName() {
+            const id = state.editingPresetId;
+            const newName = presetNameInput.value.trim();
+            if (!newName || !id) return;
+
+            const preset = presets.find(p => p.id === id);
+            if (preset) {
+                preset.name = newName;
+                await savePreset(preset);
+                closePresetModal();
+                await reloadData();
+            }
+        }
+
+        async function deleteActivePreset() {
+            const id = state.editingPresetId;
+            if (!id || presets.length <= 1) return;
+
+            await deletePreset(id);
+            closePresetModal();
+
+            // Shift active preset index safely to first remaining preset left in storage
+            const remaining = presets.filter(p => p.id !== id);
+            await saveSetting('activePresetId', remaining[0].id);
+            await reloadData();
+        }
+
+        // --- DOM Rendering (Keyboard) ---
         function renderKeyboard() {
             kbContainer.innerHTML = '';
             kbLayout.forEach(row => {
@@ -325,6 +548,9 @@
         }
 
         function updateKeyboardVisuals() {
+            const activePreset = presets.find(p => p.id === activePresetId);
+            if (!activePreset) return;
+
             // Reset all keys to default
             kbLayout.flat().forEach(key => {
                 const el = document.getElementById(`key-${key.code}`);
@@ -334,7 +560,9 @@
                 el.className = `h-14 flex flex-col items-center justify-center border rounded ${key.width || 'w-14'} font-bold transition-colors duration-100`;
                 el.innerHTML = `<span>${key.label}</span>`;
                 
-                const boundSound = sounds.find(s => s.key === key.code);
+                // Check mapped values inside our active preset file dictionary
+                const boundSoundId = activePreset.bindings[key.code];
+                const boundSound = boundSoundId ? sounds.find(s => s.id === boundSoundId) : null;
                 
                 if (boundSound) {
                     const audio = audioPlayers[boundSound.id];
@@ -469,13 +697,20 @@
                 return;
             }
 
+            const activePreset = presets.find(p => p.id === activePresetId);
+
             sounds.forEach(sound => {
                 const row = document.createElement('div');
                 row.className = 'flex items-center justify-between p-4 bg-navy-800 mb-2 rounded border border-navy-700';
                 
-                const keyLabel = sound.key ? 
-                    kbLayout.flat().find(k => k.code === sound.key)?.label || sound.key 
-                    : 'None';
+                // Read bound keys specific to active preset
+                let keyLabel = 'None';
+                if (activePreset) {
+                    const boundKey = Object.keys(activePreset.bindings).find(k => activePreset.bindings[k] === sound.id);
+                    if (boundKey) {
+                        keyLabel = kbLayout.flat().find(k => k.code === boundKey)?.label || boundKey;
+                    }
+                }
 
                 row.innerHTML = `
                     <div class="flex-1 overflow-hidden pr-4 flex flex-col gap-1">
@@ -484,7 +719,7 @@
                     </div>
                     <div class="flex gap-2">
                         <button class="btn-bind px-3 py-1.5 bg-navy-700 hover:bg-navy-600 text-white rounded text-sm border border-navy-600" data-id="${sound.id}">
-                            ${sound.key ? 'Re-bind Key' : 'Bind Key'}
+                            ${keyLabel !== 'None' ? 'Re-bind Key' : 'Bind Key'}
                         </button>
                         <button class="btn-delete px-3 py-1.5 bg-red-900/50 hover:bg-red-900/80 border border-red-800 text-red-200 rounded text-sm" data-id="${sound.id}">
                             Delete
@@ -527,8 +762,7 @@
                             // Generating highly collision-safe unique IDs for multi-uploads
                             id: Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9),
                             name: file.name,
-                            data: ev.target.result,
-                            key: null // unbound initially
+                            data: ev.target.result
                         };
                         await saveSound(newSound);
                         resolve();
@@ -562,11 +796,26 @@
         }
 
         async function deleteSoundHandler(id) {
-            // Clean up audio instance
+            // Clean up active playing audio instance
             if (audioPlayers[id]) {
                 audioPlayers[id].pause();
                 delete audioPlayers[id];
             }
+
+            // Clean up binding occurrences of this sound across ALL presets
+            for (const preset of presets) {
+                let changed = false;
+                Object.keys(preset.bindings).forEach(key => {
+                    if (preset.bindings[key] === id) {
+                        delete preset.bindings[key];
+                        changed = true;
+                    }
+                });
+                if (changed) {
+                    await savePreset(preset);
+                }
+            }
+
             await deleteSound(id);
             await reloadData();
         }
@@ -585,23 +834,19 @@
             state.bindingSoundId = null;
             bindOverlay.classList.add('hidden');
 
-            // Find target sound
-            const targetSound = sounds.find(s => s.id === soundId);
-            if (!targetSound) return;
+            const activePreset = presets.find(p => p.id === activePresetId);
+            if (!activePreset) return;
 
-            // Exclusive bind: Remove this key from any other sound
-            let changedOthers = false;
-            for (const s of sounds) {
-                if (s.key === code && s.id !== soundId) {
-                    s.key = null;
-                    await saveSound(s);
-                    changedOthers = true;
+            // Exclusive bind constraint within current preset: Remove target sound from any other keys first
+            Object.keys(activePreset.bindings).forEach(key => {
+                if (activePreset.bindings[key] === soundId) {
+                    delete activePreset.bindings[key];
                 }
-            }
+            });
 
-            // Assign to new target
-            targetSound.key = code;
-            await saveSound(targetSound);
+            // Assign to new targeted key inside current active preset
+            activePreset.bindings[code] = soundId;
+            await savePreset(activePreset);
 
             await reloadData();
         }
@@ -613,8 +858,12 @@
 
         // --- Playback Logic ---
         function togglePlay(code) {
-            const sound = sounds.find(s => s.key === code);
-            if (!sound) return; // Unbound key
+            const activePreset = presets.find(p => p.id === activePresetId);
+            if (!activePreset) return;
+
+            const soundId = activePreset.bindings[code];
+            const sound = soundId ? sounds.find(s => s.id === soundId) : null;
+            if (!sound) return; // Unbound key on current preset
 
             state.lastPlayedSoundId = sound.id; // Record as last played
 
@@ -670,6 +919,12 @@
             // Re-calibrate layout scrolling dimensions if the window is resized
             window.addEventListener('resize', initMarquees);
 
+            // Presets Header Actions
+            btnAddPreset.addEventListener('click', addNewPreset);
+            document.getElementById('btn-cancel-preset').addEventListener('click', closePresetModal);
+            document.getElementById('btn-save-preset').addEventListener('click', savePresetName);
+            document.getElementById('btn-delete-preset').addEventListener('click', deleteActivePreset);
+
             // Upload Input
             document.getElementById('upload-input').addEventListener('change', handleUpload);
             
@@ -692,6 +947,18 @@
             window.addEventListener('keydown', (e) => {
                 if (e.repeat) return; // Ignore hold repetition
 
+                // 1. Check if edit preset modal is active (Enter/Escape handler)
+                if (!presetModal.classList.contains('hidden')) {
+                    if (e.code === 'Enter') {
+                        e.preventDefault();
+                        savePresetName();
+                    } else if (e.code === 'Escape') {
+                        e.preventDefault();
+                        closePresetModal();
+                    }
+                    return;
+                }
+
                 // Intercept Tab for loop last played feature
                 if (e.code === 'Tab') {
                     e.preventDefault(); // Prevent focus switching
@@ -710,7 +977,7 @@
                     return;
                 }
 
-                // 1. If currently waiting for a key bind
+                // 2. If currently waiting for a key bind
                 if (state.bindingSoundId) {
                     e.preventDefault();
                     if (e.code === 'Escape') {
@@ -721,7 +988,7 @@
                     return;
                 }
 
-                // 2. Global Escape behavior
+                // 3. Global Escape behavior
                 if (e.code === 'Escape') {
                     if (state.isLibraryOpen) {
                         state.isLibraryOpen = false;
@@ -733,14 +1000,14 @@
                 // Ignore keyboard playback if typing in an input
                 if (e.target.tagName === 'INPUT') return;
 
-                // 3. Spacebar Stops All
+                // 4. Spacebar Stops All
                 if (e.code === 'Space') {
                     e.preventDefault(); // Prevent scrolling
                     stopAll();
                     return;
                 }
 
-                // 4. Playback Routing (Only if not in library view)
+                // 5. Playback Routing (Only if not in library view)
                 if (!state.isLibraryOpen && validKeyCodes.has(e.code)) {
                     e.preventDefault(); // Prevent default browser shortcuts when playing
                     togglePlay(e.code);
