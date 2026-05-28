@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Navy Soundboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        navy: {
+                            950: '#0a101d',
+                            900: '#111827',
+                            800: '#1e293b',
+                            700: '#334155',
+                            600: '#475569',
+                            400: '#94a3b8',
+                            300: '#cbd5e1',
+                            200: '#e2e8f0',
+                            100: '#f1f5f9',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-navy-950 text-navy-100 h-screen overflow-hidden flex flex-col font-sans select-none">
+
+    <!-- Main View -->
+    <div id="main-view" class="flex-1 flex flex-col items-center justify-center p-4 relative w-full max-w-6xl mx-auto">
+        <h1 class="text-3xl font-bold text-navy-200 mb-8">Soundboard</h1>
+        
+        <div id="keyboard-container" class="flex flex-col gap-1.5 bg-navy-900 p-6 rounded border border-navy-800">
+            <!-- Keyboard rows will be generated here -->
+        </div>
+
+        <!-- Spacebar Hint visually represented -->
+        <div class="mt-4 w-[600px] h-12 border border-navy-700 bg-navy-800 text-navy-400 flex items-center justify-center rounded uppercase tracking-widest text-sm">
+            Spacebar - Stop All Sounds
+        </div>
+    </div>
+
+    <!-- Library Modal -->
+    <div id="library-view" class="hidden absolute inset-0 bg-navy-950 z-40 flex flex-col">
+        <div class="flex items-center justify-between p-6 bg-navy-900 border-b border-navy-800">
+            <h2 class="text-2xl font-bold text-navy-100">Sound Library</h2>
+            <button id="btn-close-library" class="px-4 py-2 bg-navy-800 hover:bg-navy-700 border border-navy-700 rounded text-navy-200">
+                Back (Esc)
+            </button>
+        </div>
+
+        <div class="p-6 max-w-4xl mx-auto w-full flex-1 flex flex-col overflow-hidden">
+            <!-- Upload Section -->
+            <div class="mb-6 bg-navy-900 p-4 rounded border border-navy-800">
+                <label class="block mb-2 font-bold text-navy-200">Upload New Sound</label>
+                <input type="file" id="upload-input" accept="audio/*" class="block w-full text-sm text-navy-300 
+                    file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 
+                    file:text-sm file:font-semibold file:bg-navy-700 file:text-navy-100 
+                    hover:file:bg-navy-600 cursor-pointer"/>
+            </div>
+
+            <!-- List Section -->
+            <div class="flex-1 overflow-y-auto pr-2" id="sound-list">
+                <!-- Sounds injected via JS -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Bottom Bar -->
+    <div class="h-16 bg-navy-900 border-t border-navy-800 flex items-center px-6 justify-between z-30">
+        <div class="text-sm text-navy-400">Audio ready</div>
+        <button id="btn-open-library" class="p-2 bg-navy-800 hover:bg-navy-700 border border-navy-700 rounded flex items-center gap-2" title="Open Sound Library">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 18V5l12-2v13"></path>
+                <circle cx="6" cy="18" r="3"></circle>
+                <circle cx="18" cy="16" r="3"></circle>
+            </svg>
+            <span class="font-semibold">Library</span>
+        </button>
+    </div>
+
+    <!-- Key Bind Overlay -->
+    <div id="bind-overlay" class="hidden absolute inset-0 bg-navy-950/90 z-50 flex items-center justify-center">
+        <div class="bg-navy-900 p-8 rounded border border-navy-700 text-center shadow-lg">
+            <h3 class="text-xl font-bold text-navy-100 mb-2">Press any key to bind</h3>
+            <p class="text-navy-300 mb-6">Target: <span id="bind-target-name" class="font-bold text-white"></span></p>
+            <p class="text-sm text-navy-400">Press [Esc] to cancel</p>
+        </div>
+    </div>
+
+    <script>
+        // --- Database Setup (IndexedDB for permanent client-side storage) ---
+        const DB_NAME = 'NavySoundboardDB';
+        const STORE_NAME = 'sounds';
+
+        function openDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, 1);
+                request.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains(STORE_NAME)) {
+                        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                    }
+                };
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        async function saveSound(sound) {
+            const db = await openDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                tx.objectStore(STORE_NAME).put(sound);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        }
+
+        async function getSounds() {
+            const db = await openDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readonly');
+                const req = tx.objectStore(STORE_NAME).getAll();
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+        }
+
+        async function deleteSound(id) {
+            const db = await openDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                tx.objectStore(STORE_NAME).delete(id);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+        }
+
+        // --- Keyboard Layout Data ---
+        const kbLayout = [
+            [
+                {code: 'Backquote', label: '`'}, {code: 'Digit1', label: '1'}, {code: 'Digit2', label: '2'},
+                {code: 'Digit3', label: '3'}, {code: 'Digit4', label: '4'}, {code: 'Digit5', label: '5'},
+                {code: 'Digit6', label: '6'}, {code: 'Digit7', label: '7'}, {code: 'Digit8', label: '8'},
+                {code: 'Digit9', label: '9'}, {code: 'Digit0', label: '0'}, {code: 'Minus', label: '-'},
+                {code: 'Equal', label: '='}, {code: 'Backspace', label: 'Backspace', width: 'w-24'}
+            ],
+            [
+                {code: 'Tab', label: 'Tab', width: 'w-20'}, {code: 'KeyQ', label: 'Q'}, {code: 'KeyW', label: 'W'},
+                {code: 'KeyE', label: 'E'}, {code: 'KeyR', label: 'R'}, {code: 'KeyT', label: 'T'},
+                {code: 'KeyY', label: 'Y'}, {code: 'KeyU', label: 'U'}, {code: 'KeyI', label: 'I'},
+                {code: 'KeyO', label: 'O'}, {code: 'KeyP', label: 'P'}, {code: 'BracketLeft', label: '['},
+                {code: 'BracketRight', label: ']'}, {code: 'Backslash', label: '\\', width: 'w-16'}
+            ],
+            [
+                {code: 'CapsLock', label: 'Caps', width: 'w-24'}, {code: 'KeyA', label: 'A'}, {code: 'KeyS', label: 'S'},
+                {code: 'KeyD', label: 'D'}, {code: 'KeyF', label: 'F'}, {code: 'KeyG', label: 'G'},
+                {code: 'KeyH', label: 'H'}, {code: 'KeyJ', label: 'J'}, {code: 'KeyK', label: 'K'},
+                {code: 'KeyL', label: 'L'}, {code: 'Semicolon', label: ';'}, {code: 'Quote', label: "'"},
+                {code: 'Enter', label: 'Enter', width: 'w-24'}
+            ],
+            [
+                {code: 'ShiftLeft', label: 'Shift', width: 'w-32'}, {code: 'KeyZ', label: 'Z'}, {code: 'KeyX', label: 'X'},
+                {code: 'KeyC', label: 'C'}, {code: 'KeyV', label: 'V'}, {code: 'KeyB', label: 'B'},
+                {code: 'KeyN', label: 'N'}, {code: 'KeyM', label: 'M'}, {code: 'Comma', label: ','},
+                {code: 'Period', label: '.'}, {code: 'Slash', label: '/'}, {code: 'ShiftRight', label: 'Shift', width: 'w-32'}
+            ]
+        ];
+
+        // Ensure we easily know valid keys
+        const validKeyCodes = new Set(kbLayout.flat().map(k => k.code));
+
+        // --- Application State ---
+        let sounds = [];
+        let audioPlayers = {}; // Mapping { soundId: Audio }
+        let state = {
+            isLibraryOpen: false,
+            bindingSoundId: null, // If set, we are listening for a key to bind
+        };
+
+        // --- UI Elements ---
+        const kbContainer = document.getElementById('keyboard-container');
+        const soundList = document.getElementById('sound-list');
+        const libraryView = document.getElementById('library-view');
+        const bindOverlay = document.getElementById('bind-overlay');
+        const bindTargetName = document.getElementById('bind-target-name');
+
+        // --- Initialization ---
+        async function init() {
+            renderKeyboard();
+            await reloadData();
+            setupEventListeners();
+        }
+
+        async function reloadData() {
+            sounds = await getSounds();
+            updateKeyboardVisuals();
+            renderLibraryList();
+        }
+
+        // --- DOM Rendering ---
+        function renderKeyboard() {
+            kbContainer.innerHTML = '';
+            kbLayout.forEach(row => {
+                const rowEl = document.createElement('div');
+                rowEl.className = 'flex justify-center gap-1.5';
+                
+                row.forEach(key => {
+                    const keyEl = document.createElement('div');
+                    keyEl.id = `key-${key.code}`;
+                    keyEl.className = `h-14 flex items-center justify-center border rounded ${key.width || 'w-14'} 
+                        font-bold text-sm transition-colors duration-100 bg-navy-800 border-navy-700 text-navy-400`;
+                    keyEl.innerText = key.label;
+                    rowEl.appendChild(keyEl);
+                });
+                
+                kbContainer.appendChild(rowEl);
+            });
+        }
+
+        function updateKeyboardVisuals() {
+            // Reset all keys to default
+            kbLayout.flat().forEach(key => {
+                const el = document.getElementById(`key-${key.code}`);
+                if (!el) return;
+                
+                // Base Classes
+                el.className = `h-14 flex flex-col items-center justify-center border rounded ${key.width || 'w-14'} font-bold transition-colors duration-100`;
+                el.innerHTML = `<span>${key.label}</span>`;
+                
+                const boundSound = sounds.find(s => s.key === key.code);
+                
+                if (boundSound) {
+                    const audio = audioPlayers[boundSound.id];
+                    let isPlaying = audio && !audio.paused && audio.currentTime > 0;
+                    let isPaused = audio && audio.paused && audio.currentTime > 0;
+
+                    // Add small indicator name
+                    el.innerHTML += `<span class="text-[0.6rem] font-normal truncate w-full text-center px-1 opacity-75">${boundSound.name}</span>`;
+                    el.title = boundSound.name;
+
+                    if (isPlaying) {
+                        // Playing state
+                        el.classList.add('bg-blue-300', 'border-blue-200', 'text-navy-950');
+                    } else if (isPaused) {
+                        // Paused state
+                        el.classList.add('bg-blue-600', 'border-blue-500', 'text-blue-100');
+                    } else {
+                        // Bound but idle
+                        el.classList.add('bg-navy-700', 'border-navy-600', 'text-navy-100');
+                    }
+                } else {
+                    // Unbound
+                    el.classList.add('bg-navy-800', 'border-navy-700', 'text-navy-400');
+                    el.title = "Unbound";
+                }
+            });
+        }
+
+        function renderLibraryList() {
+            soundList.innerHTML = '';
+            if (sounds.length === 0) {
+                soundList.innerHTML = `<div class="text-navy-400 text-center py-8 border border-dashed border-navy-700 rounded">No sounds uploaded yet.</div>`;
+                return;
+            }
+
+            sounds.forEach(sound => {
+                const row = document.createElement('div');
+                row.className = 'flex items-center justify-between p-4 bg-navy-800 mb-2 rounded border border-navy-700';
+                
+                const keyLabel = sound.key ? 
+                    kbLayout.flat().find(k => k.code === sound.key)?.label || sound.key 
+                    : 'None';
+
+                row.innerHTML = `
+                    <div class="flex-1 overflow-hidden pr-4">
+                        <div class="font-semibold text-navy-100 truncate" title="${sound.name}">${sound.name}</div>
+                        <div class="text-sm text-navy-400">Assigned Key: <span class="font-mono bg-navy-950 px-1 py-0.5 rounded border border-navy-700 ml-1 text-navy-200">${keyLabel}</span></div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button class="btn-bind px-3 py-1.5 bg-navy-700 hover:bg-navy-600 text-white rounded text-sm border border-navy-600" data-id="${sound.id}">
+                            ${sound.key ? 'Re-bind Key' : 'Bind Key'}
+                        </button>
+                        <button class="btn-delete px-3 py-1.5 bg-red-900/50 hover:bg-red-900/80 border border-red-800 text-red-200 rounded text-sm" data-id="${sound.id}">
+                            Delete
+                        </button>
+                    </div>
+                `;
+                soundList.appendChild(row);
+            });
+
+            // Attach listeners to buttons
+            document.querySelectorAll('.btn-bind').forEach(btn => {
+                btn.addEventListener('click', () => startBinding(btn.dataset.id));
+            });
+            document.querySelectorAll('.btn-delete').forEach(btn => {
+                btn.addEventListener('click', () => deleteSoundHandler(btn.dataset.id));
+            });
+        }
+
+        // --- Actions ---
+        async function handleUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = async (ev) => {
+                const newSound = {
+                    id: Date.now().toString(),
+                    name: file.name,
+                    data: ev.target.result,
+                    key: null // unbound initially
+                };
+                await saveSound(newSound);
+                document.getElementById('upload-input').value = '';
+                await reloadData();
+            };
+            reader.readAsDataURL(file);
+        }
+
+        async function deleteSoundHandler(id) {
+            // Clean up audio instance
+            if (audioPlayers[id]) {
+                audioPlayers[id].pause();
+                delete audioPlayers[id];
+            }
+            await deleteSound(id);
+            await reloadData();
+        }
+
+        function startBinding(id) {
+            const sound = sounds.find(s => s.id === id);
+            if (!sound) return;
+
+            state.bindingSoundId = id;
+            bindTargetName.innerText = sound.name;
+            bindOverlay.classList.remove('hidden');
+        }
+
+        async function executeBinding(code) {
+            const soundId = state.bindingSoundId;
+            state.bindingSoundId = null;
+            bindOverlay.classList.add('hidden');
+
+            // Find target sound
+            const targetSound = sounds.find(s => s.id === soundId);
+            if (!targetSound) return;
+
+            // Exclusive bind: Remove this key from any other sound
+            let changedOthers = false;
+            for (const s of sounds) {
+                if (s.key === code && s.id !== soundId) {
+                    s.key = null;
+                    await saveSound(s);
+                    changedOthers = true;
+                }
+            }
+
+            // Assign to new target
+            targetSound.key = code;
+            await saveSound(targetSound);
+
+            await reloadData();
+        }
+
+        function cancelBinding() {
+            state.bindingSoundId = null;
+            bindOverlay.classList.add('hidden');
+        }
+
+        // --- Playback Logic ---
+        function togglePlay(code) {
+            const sound = sounds.find(s => s.key === code);
+            if (!sound) return; // Unbound key
+
+            let audio = audioPlayers[sound.id];
+            
+            // Lazy load audio instance
+            if (!audio) {
+                audio = new Audio(sound.data);
+                audio.loop = false;
+                audio.onended = () => {
+                    audio.currentTime = 0;
+                    audio.paused = true;
+                    updateKeyboardVisuals();
+                };
+                audioPlayers[sound.id] = audio;
+            }
+
+            // State Machine
+            if (audio.paused) {
+                // If paused or stopped, play
+                audio.play();
+            } else {
+                // If playing, pause
+                audio.pause();
+            }
+            updateKeyboardVisuals();
+        }
+
+        function stopAll() {
+            let changes = false;
+            for (let id in audioPlayers) {
+                const audio = audioPlayers[id];
+                if (!audio.paused || audio.currentTime > 0) {
+                    audio.pause();
+                    audio.currentTime = 0;
+                    changes = true;
+                }
+            }
+            if (changes) updateKeyboardVisuals();
+        }
+
+        // --- Event Listeners ---
+        function setupEventListeners() {
+            // Upload Input
+            document.getElementById('upload-input').addEventListener('change', handleUpload);
+
+            // UI View Toggles
+            document.getElementById('btn-open-library').addEventListener('click', () => {
+                state.isLibraryOpen = true;
+                libraryView.classList.remove('hidden');
+            });
+
+            document.getElementById('btn-close-library').addEventListener('click', () => {
+                state.isLibraryOpen = false;
+                libraryView.classList.add('hidden');
+            });
+
+            // Global Keydown Router
+            window.addEventListener('keydown', (e) => {
+                if (e.repeat) return; // Ignore hold repetition
+
+                // 1. If currently waiting for a key bind
+                if (state.bindingSoundId) {
+                    e.preventDefault();
+                    if (e.code === 'Escape') {
+                        cancelBinding();
+                    } else if (validKeyCodes.has(e.code)) {
+                        executeBinding(e.code);
+                    }
+                    return;
+                }
+
+                // 2. Global Escape behavior
+                if (e.code === 'Escape') {
+                    if (state.isLibraryOpen) {
+                        state.isLibraryOpen = false;
+                        libraryView.classList.add('hidden');
+                    }
+                    return;
+                }
+
+                // Ignore keyboard playback if typing in an input (just in case, though we have no text inputs here)
+                if (e.target.tagName === 'INPUT') return;
+
+                // 3. Spacebar Stops All
+                if (e.code === 'Space') {
+                    e.preventDefault(); // Prevent scrolling
+                    stopAll();
+                    return;
+                }
+
+                // 4. Playback Routing (Only if not in library view)
+                if (!state.isLibraryOpen && validKeyCodes.has(e.code)) {
+                    e.preventDefault(); // Prevent default browser shortcuts when playing
+                    togglePlay(e.code);
+                }
+            });
+        }
+
+        // --- Boot ---
+        window.addEventListener('DOMContentLoaded', init);
+
+    </script>
+</body>
+</html>
