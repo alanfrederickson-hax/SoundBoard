@@ -83,8 +83,8 @@
             <!-- Upload Section -->
             <div class="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div class="bg-navy-900 p-4 rounded border border-navy-800">
-                    <label class="block mb-2 font-bold text-navy-200">Upload New Sound</label>
-                    <input type="file" id="upload-input" accept="audio/*" class="block w-full text-sm text-navy-300 
+                    <label class="block mb-2 font-bold text-navy-200">Upload New Sounds (Multiple Allowed)</label>
+                    <input type="file" id="upload-input" accept="audio/*" multiple class="block w-full text-sm text-navy-300 
                         file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 
                         file:text-sm file:font-semibold file:bg-navy-700 file:text-navy-100 
                         hover:file:bg-navy-600 cursor-pointer"/>
@@ -255,6 +255,15 @@
             lastPlayedSoundId: null, // Track the last played sound
         };
 
+        // --- Synchronized Marquee State Tracker ---
+        let marqueeElements = [];
+        let globalMarqueeState = {
+            phase: 'scrolling', // 'scrolling' | 'waiting'
+            elapsedTime: 0,
+            scrollDuration: 0,
+            cooldownDuration: 5000 // 5 seconds pause
+        };
+
         // --- UI Elements ---
         const kbContainer = document.getElementById('keyboard-container');
         const soundList = document.getElementById('sound-list');
@@ -268,6 +277,7 @@
             await reloadData();
             await loadSettings();
             setupEventListeners();
+            requestAnimationFrame(marqueeTick);
         }
 
         async function loadSettings() {
@@ -331,8 +341,12 @@
                     let isPlaying = audio && !audio.paused && audio.currentTime > 0;
                     let isPaused = audio && audio.paused && audio.currentTime > 0;
 
-                    // Add small indicator name
-                    el.innerHTML += `<span class="text-[0.6rem] font-normal truncate w-full text-center px-1 opacity-75">${boundSound.name}</span>`;
+                    // Add structured scrollable marquee label container
+                    el.innerHTML += `
+                        <div class="marquee-container overflow-hidden w-full text-center relative h-5 mt-0.5">
+                            <span class="marquee-text whitespace-nowrap inline-block text-[0.6rem] font-normal opacity-75" style="position: absolute; left: 50%; transform: translateX(-50%);">${boundSound.name}</span>
+                        </div>
+                    `;
                     el.title = boundSound.name;
 
                     if (isPlaying) {
@@ -351,6 +365,101 @@
                     el.title = "Unbound";
                 }
             });
+
+            // Re-measure and calibrate scroll positions after the elements render
+            requestAnimationFrame(() => {
+                initMarquees();
+            });
+        }
+
+        // --- Synchronized Marquee Logic ---
+        function initMarquees() {
+            marqueeElements = [];
+            const containers = document.querySelectorAll('.marquee-container');
+            let maxScrollVal = 0;
+
+            containers.forEach(container => {
+                const textEl = container.querySelector('.marquee-text');
+                if (!textEl) return;
+
+                const containerWidth = container.offsetWidth;
+                const textWidth = textEl.scrollWidth;
+
+                // Only apply scroll behavior if text width exceeds container width
+                if (textWidth > containerWidth) {
+                    textEl.style.left = '0px';
+                    textEl.style.transform = 'translateX(0px)';
+                    
+                    const maxScroll = textWidth - containerWidth + 6; // extra small padding offset
+                    if (maxScroll > maxScrollVal) {
+                        maxScrollVal = maxScroll;
+                    }
+
+                    marqueeElements.push({
+                        textEl,
+                        maxScroll,
+                        currentX: 0
+                    });
+                } else {
+                    textEl.style.left = '50%';
+                    textEl.style.transform = 'translateX(-50%)';
+                }
+            });
+
+            // Scrolling speed: 20px per second
+            globalMarqueeState.scrollDuration = maxScrollVal > 0 ? (maxScrollVal / 20) * 1000 : 0;
+            globalMarqueeState.elapsedTime = 0;
+            globalMarqueeState.phase = 'scrolling';
+        }
+
+        let lastTime = 0;
+        function marqueeTick(timestamp) {
+            if (!lastTime) lastTime = timestamp;
+            const delta = timestamp - lastTime;
+            lastTime = timestamp;
+
+            if (marqueeElements.length > 0 && globalMarqueeState.scrollDuration > 0) {
+                globalMarqueeState.elapsedTime += delta;
+
+                if (globalMarqueeState.phase === 'scrolling') {
+                    // Check if the longest scroll duration has finished
+                    if (globalMarqueeState.elapsedTime >= globalMarqueeState.scrollDuration) {
+                        globalMarqueeState.phase = 'waiting';
+                        globalMarqueeState.elapsedTime = 0;
+                    }
+
+                    marqueeElements.forEach(item => {
+                        const itemDuration = (item.maxScroll / 20) * 1000;
+                        if (globalMarqueeState.elapsedTime < itemDuration) {
+                            // Translate leftward
+                            item.currentX = - (20 * globalMarqueeState.elapsedTime) / 1000;
+                        } else {
+                            // Finished scrolling! Immediately snap back to the beginning of the name (0px)
+                            item.currentX = 0;
+                        }
+                        item.textEl.style.transform = `translateX(${item.currentX}px)`;
+                    });
+                } else if (globalMarqueeState.phase === 'waiting') {
+                    // Check if global synchronized 5-second waiting phase is over
+                    if (globalMarqueeState.elapsedTime >= globalMarqueeState.cooldownDuration) {
+                        globalMarqueeState.phase = 'scrolling';
+                        globalMarqueeState.elapsedTime = 0;
+                    }
+
+                    // Keep all texts static at 0 (beginning) during cooldown
+                    marqueeElements.forEach(item => {
+                        item.currentX = 0;
+                        item.textEl.style.transform = `translateX(0px)`;
+                    });
+                }
+            } else {
+                // Keep everything static at 0 if no scrolling texts exist
+                marqueeElements.forEach(item => {
+                    item.textEl.style.transform = `translateX(0px)`;
+                });
+            }
+
+            requestAnimationFrame(marqueeTick);
         }
 
         function renderLibraryList() {
@@ -407,22 +516,30 @@
 
         // --- Actions ---
         async function handleUpload(e) {
-            const file = e.target.files[0];
-            if (!file) return;
+            const files = Array.from(e.target.files);
+            if (files.length === 0) return;
 
-            const reader = new FileReader();
-            reader.onload = async (ev) => {
-                const newSound = {
-                    id: Date.now().toString(),
-                    name: file.name,
-                    data: ev.target.result,
-                    key: null // unbound initially
-                };
-                await saveSound(newSound);
-                document.getElementById('upload-input').value = '';
-                await reloadData();
-            };
-            reader.readAsDataURL(file);
+            const uploadPromises = files.map(file => {
+                return new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onload = async (ev) => {
+                        const newSound = {
+                            // Generating highly collision-safe unique IDs for multi-uploads
+                            id: Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9),
+                            name: file.name,
+                            data: ev.target.result,
+                            key: null // unbound initially
+                        };
+                        await saveSound(newSound);
+                        resolve();
+                    };
+                    reader.readAsDataURL(file);
+                });
+            });
+
+            await Promise.all(uploadPromises);
+            document.getElementById('upload-input').value = '';
+            await reloadData();
         }
 
         async function handleBgUpload(e) {
@@ -550,6 +667,9 @@
 
         // --- Event Listeners ---
         function setupEventListeners() {
+            // Re-calibrate layout scrolling dimensions if the window is resized
+            window.addEventListener('resize', initMarquees);
+
             // Upload Input
             document.getElementById('upload-input').addEventListener('change', handleUpload);
             
@@ -610,7 +730,7 @@
                     return;
                 }
 
-                // Ignore keyboard playback if typing in an input (just in case, though we have no text inputs here)
+                // Ignore keyboard playback if typing in an input
                 if (e.target.tagName === 'INPUT') return;
 
                 // 3. Spacebar Stops All
