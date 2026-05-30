@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Navy Soundboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- JSZip Library for exporting/importing files to ZIP -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script>
         tailwind.config = {
             theme: {
@@ -34,7 +36,7 @@
             background-attachment: fixed;
         }
         /* Override main screen elements with transparent black when an image is active.
-           The library view is purposefully excluded so it remains solid navy. */
+           The library view and add-preset modal are purposefully excluded so they remain solid navy. */
         body.has-bg #main-view > div, 
         body.has-bg #main-title,
         body.has-bg #keyboard-container div.bg-navy-800,
@@ -53,13 +55,29 @@
         body.has-bg #main-title {
             backdrop-filter: blur(4px);
         }
+
+        /* Ensure Add Preset screen is fully unaffected by transparent overrides */
+        body.has-bg #add-preset-modal > div,
+        body.has-bg #add-preset-modal div,
+        body.has-bg #add-preset-modal button:not(#btn-option-import) {
+            background-color: #111827 !important;
+            border-color: #1e293b !important;
+            color: #f1f5f9 !important;
+        }
+        body.has-bg #add-preset-modal button#btn-option-import {
+            background-color: rgba(37, 99, 235, 0.1) !important;
+            border-color: rgba(59, 130, 246, 0.5) !important;
+            color: #60a5fa !important;
+        }
     </style>
 </head>
 <body class="bg-navy-950 text-navy-100 h-screen overflow-hidden flex flex-col font-sans select-none">
 
     <!-- Main View -->
     <div id="main-view" class="flex-1 flex flex-col items-center justify-center p-4 relative w-full max-w-6xl mx-auto">
-        <h1 id="main-title" class="text-3xl font-bold text-navy-200 mb-6 px-6 py-2 rounded border border-transparent transition-colors">Soundboard</h1>
+        <h1 id="main-title" class="mb-6 px-6 py-2 rounded border border-transparent transition-colors flex items-center justify-center min-h-[4rem]">
+            <img src="logo.png" alt="Soundboard" class="max-h-16 object-contain drop-shadow-md" onerror="this.onerror=null; this.outerHTML='<span class=\'text-3xl font-bold text-navy-200\'>Soundboard</span>';">
+        </h1>
         
         <!-- Presets Row -->
         <div id="presets-bar" class="w-full max-w-4xl flex items-center justify-between mb-4 gap-4 px-2">
@@ -92,23 +110,56 @@
             </button>
         </div>
 
-        <div class="p-6 max-w-4xl mx-auto w-full flex-1 flex flex-col overflow-hidden">
-            <!-- Upload Section -->
-            <div class="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div class="bg-navy-900 p-4 rounded border border-navy-800">
-                    <label class="block mb-2 font-bold text-navy-200">Upload New Sounds (Multiple Allowed)</label>
+        <div class="p-6 max-w-5xl mx-auto w-full flex-1 flex flex-col overflow-hidden">
+            <!-- Action Grid Section -->
+            <div class="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4 shrink-0">
+                <!-- Sounds Upload Column -->
+                <div class="bg-navy-900 p-4 rounded border border-navy-800 flex flex-col justify-between">
+                    <div>
+                        <label class="block mb-2 font-bold text-navy-200">Upload New Sounds</label>
+                        <p class="text-xs text-navy-400 mb-3">Upload multiple audio files directly into your layout dashboard library.</p>
+                    </div>
                     <input type="file" id="upload-input" accept="audio/*" multiple class="block w-full text-sm text-navy-300 
-                        file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 
-                        file:text-sm file:font-semibold file:bg-navy-700 file:text-navy-100 
+                        file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 
+                        file:text-xs file:font-semibold file:bg-navy-700 file:text-navy-100 
                         hover:file:bg-navy-600 cursor-pointer"/>
                 </div>
-                <div class="bg-navy-900 p-4 rounded border border-navy-800">
-                    <label class="block mb-2 font-bold text-navy-200">Upload Background Image</label>
-                    <input type="file" id="bg-upload-input" accept="image/*" class="block w-full text-sm text-navy-300 
-                        file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 
-                        file:text-sm file:font-semibold file:bg-navy-700 file:text-navy-100 
-                        hover:file:bg-navy-600 cursor-pointer"/>
-                    <button id="btn-clear-bg" class="mt-2 text-sm text-red-400 hover:text-red-300 hidden font-semibold">Clear Background</button>
+
+                <!-- Background Customization Column -->
+                <div class="bg-navy-900 p-4 rounded border border-navy-800 flex flex-col justify-between">
+                    <div>
+                        <label class="block mb-2 font-bold text-navy-200">Upload Background Image</label>
+                        <p class="text-xs text-navy-400 mb-3">Set a preset-specific dashboard style backdrop. Rescales dynamically.</p>
+                    </div>
+                    <div>
+                        <input type="file" id="bg-upload-input" accept="image/*" class="block w-full text-sm text-navy-300 
+                            file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 
+                            file:text-xs file:font-semibold file:bg-navy-700 file:text-navy-100 
+                            hover:file:bg-navy-600 cursor-pointer"/>
+                        <button id="btn-clear-bg" class="mt-2 text-xs text-red-400 hover:text-red-300 hidden font-semibold">Clear Background</button>
+                    </div>
+                </div>
+
+                <!-- Export backup column -->
+                <div class="bg-navy-900 p-4 rounded border border-navy-800 flex flex-col justify-between">
+                    <div>
+                        <label class="block mb-2 font-bold text-navy-200">Export Preset Backup</label>
+                        <p class="text-xs text-navy-400 mb-3">Zip and download ONLY active sounds, mapping layout keybinds, and background of this preset.</p>
+                    </div>
+                    <button id="btn-export-zip" class="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded text-sm border border-blue-500 transition-colors flex items-center justify-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                        </svg>
+                        <span>Export Preset to ZIP</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Search Feature Bar -->
+            <div class="mb-4 shrink-0">
+                <div class="relative">
+                    <input type="text" id="library-search" class="w-full bg-navy-900 border border-navy-800 rounded px-4 py-2 text-sm text-navy-100 placeholder-navy-400 focus:outline-none focus:border-blue-500" placeholder="Search sounds by name...">
+                    <button id="btn-clear-search" class="absolute right-3 top-2 text-navy-400 hover:text-navy-200 hidden text-sm font-semibold">Clear</button>
                 </div>
             </div>
 
@@ -121,7 +172,7 @@
 
     <!-- Bottom Bar -->
     <div class="h-16 bg-navy-900 border-t border-navy-800 flex items-center px-6 justify-between z-30">
-        <div class="text-sm text-navy-400">Audio ready</div>
+        <div id="status-indicator" class="text-sm text-navy-400">Audio ready</div>
         <button id="btn-open-library" class="p-2 bg-navy-800 hover:bg-navy-700 border border-navy-700 rounded flex items-center gap-2" title="Open Sound Library">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M9 18V5l12-2v13"></path>
@@ -153,6 +204,55 @@
             </div>
         </div>
     </div>
+
+    <!-- Add Preset Options Modal -->
+    <div id="add-preset-modal" class="hidden absolute inset-0 bg-navy-950/90 z-50 flex items-center justify-center">
+        <div class="bg-navy-900 p-6 rounded border border-navy-700 w-96 shadow-lg flex flex-col">
+            <h3 id="add-preset-title" class="text-xl font-bold text-navy-100 mb-4 text-center">Add Preset</h3>
+            
+            <!-- Screen 1: Options -->
+            <div id="add-preset-options" class="flex flex-col gap-3">
+                <button id="btn-option-clone" class="w-full py-3 bg-navy-800 hover:bg-navy-700 border border-navy-700 rounded text-navy-100 text-sm font-semibold transition-colors flex items-center justify-between px-4">
+                    <span>👥 Clone From Previous</span>
+                    <span class="text-[10px] uppercase tracking-wider text-navy-400">Select Preset</span>
+                </button>
+                
+                <!-- Sleek Blue Import Design (No emoji) -->
+                <button id="btn-option-import" class="w-full py-3 bg-blue-600/10 hover:bg-blue-600/20 border border-blue-500 rounded text-blue-400 text-sm font-semibold transition-colors flex items-center justify-between px-4">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+                        </svg>
+                        <span>Import From Zip File</span>
+                    </div>
+                    <span class="text-[10px] uppercase tracking-wider text-blue-500">Zip File Only</span>
+                </button>
+                
+                <button id="btn-option-create" class="w-full py-3 bg-navy-800 hover:bg-navy-700 border border-navy-700 rounded text-navy-100 text-sm font-semibold transition-colors flex items-center justify-between px-4">
+                    <span>✨ Create New Set</span>
+                    <span class="text-[10px] uppercase tracking-wider text-navy-400">Empty slate</span>
+                </button>
+            </div>
+
+            <!-- Screen 2: Clone Preset Selector -->
+            <div id="add-preset-clone-selector" class="hidden flex flex-col gap-2">
+                <p class="text-xs text-navy-400 mb-2">Select a preset to clone:</p>
+                <div id="clone-presets-list" class="max-h-48 overflow-y-auto pr-1 flex flex-col gap-1.5">
+                    <!-- Populated dynamically via JS -->
+                </div>
+                <button id="btn-back-to-options" class="mt-4 px-3 py-1.5 bg-navy-800 hover:bg-navy-700 border border-navy-700 rounded text-navy-300 text-xs font-semibold transition-colors self-start">
+                    &larr; Back
+                </button>
+            </div>
+
+            <div class="flex justify-end mt-6 border-t border-navy-800 pt-4" id="add-preset-footer">
+                <button id="btn-cancel-add-preset" class="px-4 py-2 bg-navy-800 hover:bg-navy-700 border border-navy-700 rounded text-navy-200 text-sm font-semibold transition-colors">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hidden input trigger for file import selection -->
+    <input type="file" id="import-zip-input" accept=".zip" class="hidden">
 
     <script>
         // --- Database Setup (IndexedDB with multi-store support for settings and presets) ---
@@ -338,19 +438,24 @@
         const btnAddPreset = document.getElementById('btn-add-preset');
         const presetModal = document.getElementById('preset-modal');
         const presetNameInput = document.getElementById('preset-name-input');
+        const librarySearch = document.getElementById('library-search');
+        const btnClearSearch = document.getElementById('btn-clear-search');
+        const statusIndicator = document.getElementById('status-indicator');
+        
+        // Add Preset Modals
+        const addPresetModal = document.getElementById('add-preset-modal');
+        const btnOptionClone = document.getElementById('btn-option-clone');
+        const btnOptionImport = document.getElementById('btn-option-import');
+        const btnOptionCreate = document.getElementById('btn-option-create');
+        const btnCancelAddPreset = document.getElementById('btn-cancel-add-preset');
+        const importZipInput = document.getElementById('import-zip-input');
 
         // --- Initialization ---
         async function init() {
             renderKeyboard();
             await reloadData();
-            await loadSettings();
             setupEventListeners();
             requestAnimationFrame(marqueeTick);
-        }
-
-        async function loadSettings() {
-            const bgImage = await getSetting('bgImage');
-            applyBackground(bgImage);
         }
 
         function applyBackground(dataUrl) {
@@ -392,7 +497,7 @@
                 await saveSetting('activePresetId', activeId);
             }
 
-            // Fallback for missing/deleted active preset index references
+            // Fallback for missing/deleted active preset references
             if (!activeId || !allPresets.some(p => p.id === activeId)) {
                 activeId = allPresets[0].id;
                 await saveSetting('activePresetId', activeId);
@@ -400,6 +505,14 @@
 
             presets = allPresets;
             activePresetId = activeId;
+
+            // Apply the background configuration assigned to the active preset
+            const activePreset = presets.find(p => p.id === activePresetId);
+            if (activePreset && activePreset.bgImage) {
+                applyBackground(activePreset.bgImage);
+            } else {
+                applyBackground(null);
+            }
 
             // Enable/Disable "Add Preset" depending on max limit (Max: 10 Presets)
             if (presets.length >= 10) {
@@ -474,6 +587,118 @@
             await savePreset(newPreset);
             await saveSetting('activePresetId', newId);
             await reloadData();
+        }
+
+        async function clonePresetById(presetId) {
+            if (presets.length >= 10) return;
+            const sourcePreset = presets.find(p => p.id === presetId);
+            if (!sourcePreset) return;
+
+            const newId = `preset-${Date.now()}`;
+            const clonedPreset = {
+                id: newId,
+                name: `${sourcePreset.name} (Clone)`,
+                bindings: { ...sourcePreset.bindings }
+            };
+            
+            if (sourcePreset.bgImage) {
+                clonedPreset.bgImage = sourcePreset.bgImage;
+            }
+
+            await savePreset(clonedPreset);
+            await saveSetting('activePresetId', newId);
+            await reloadData();
+        }
+
+        async function importZipPresetFile(file) {
+            statusIndicator.innerText = "Importing preset ZIP...";
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                const zip = await JSZip.loadAsync(arrayBuffer);
+                
+                const configFile = zip.file("preset_config.json");
+                if (!configFile) {
+                    throw new Error("Invalid preset ZIP backup file: Missing 'preset_config.json'");
+                }
+
+                const configText = await configFile.async("string");
+                const config = JSON.parse(configText);
+
+                const importedPreset = config.activePreset;
+                if (!importedPreset) {
+                    throw new Error("Invalid preset structure: Missing active preset template.");
+                }
+
+                // Map old unique sound references in ZIP metadata to clean imported sound IDs to prevent overlaps
+                const oldToNewSoundIds = {};
+
+                // Load and safely reconstruct all binary sound attachments
+                for (const s of config.sounds || []) {
+                    const fileInZip = zip.file(`audio/${s.id}_${s.name}`);
+                    if (fileInZip) {
+                        const base64Audio = await fileInZip.async("base64");
+                        
+                        // Detect mime-type structure based on extension metadata
+                        const ext = s.name.split('.').pop().toLowerCase();
+                        let mime = 'audio/mpeg';
+                        if (ext === 'wav') mime = 'audio/wav';
+                        else if (ext === 'ogg') mime = 'audio/ogg';
+                        else if (ext === 'aac') mime = 'audio/aac';
+                        else if (ext === 'flac') mime = 'audio/x-flac';
+
+                        const soundDataUrl = `data:${mime};base64,${base64Audio}`;
+                        const newSoundId = Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9);
+                        oldToNewSoundIds[s.id] = newSoundId;
+
+                        const soundObj = {
+                            id: newSoundId,
+                            name: s.name,
+                            data: soundDataUrl
+                        };
+                        await saveSound(soundObj);
+                    }
+                }
+
+                // Construct clean bindings referring to newly generated Sound IDs
+                const newBindings = {};
+                for (const [keyCode, oldSoundId] of Object.entries(importedPreset.bindings)) {
+                    if (oldToNewSoundIds[oldSoundId]) {
+                        newBindings[keyCode] = oldToNewSoundIds[oldSoundId];
+                    }
+                }
+
+                // Handle preset specific custom backdrop image if present in root folder
+                let importedBg = null;
+                const bgFiles = Object.keys(zip.files).filter(name => name.startsWith("background."));
+                if (bgFiles.length > 0) {
+                    const bgFile = zip.file(bgFiles[0]);
+                    const base64Bg = await bgFile.async("base64");
+                    const ext = bgFiles[0].split('.').pop().toLowerCase();
+                    const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png';
+                    importedBg = `data:${mime};base64,${base64Bg}`;
+                }
+
+                // Save reconstructed preset configuration cleanly
+                const newPresetId = `preset-${Date.now()}`;
+                const finalPreset = {
+                    id: newPresetId,
+                    name: `${importedPreset.name} (Imported)`,
+                    bindings: newBindings
+                };
+
+                if (importedBg) {
+                    finalPreset.bgImage = importedBg;
+                }
+
+                await savePreset(finalPreset);
+                await saveSetting('activePresetId', newPresetId);
+                
+                statusIndicator.innerText = "Preset imported successfully!";
+                await reloadData();
+            } catch (err) {
+                console.error(err);
+                statusIndicator.innerText = `Import failed: ${err.message}`;
+            }
         }
 
         function openPresetModal(presetId) {
@@ -690,16 +915,32 @@
             requestAnimationFrame(marqueeTick);
         }
 
+        // --- Sound Library List & Search Rendering ---
         function renderLibraryList() {
             soundList.innerHTML = '';
-            if (sounds.length === 0) {
-                soundList.innerHTML = `<div class="text-navy-400 text-center py-8 border border-dashed border-navy-700 rounded">No sounds uploaded yet.</div>`;
+            
+            const filterText = librarySearch.value.toLowerCase().trim();
+            const filteredSounds = sounds.filter(sound => sound.name.toLowerCase().includes(filterText));
+
+            // Show/hide clear search button
+            if (filterText.length > 0) {
+                btnClearSearch.classList.remove('hidden');
+            } else {
+                btnClearSearch.classList.add('hidden');
+            }
+
+            if (filteredSounds.length === 0) {
+                if (filterText.length > 0) {
+                    soundList.innerHTML = `<div class="text-navy-400 text-center py-8 border border-dashed border-navy-700 rounded">No matching sounds found for "${escapeHtml(filterText)}".</div>`;
+                } else {
+                    soundList.innerHTML = `<div class="text-navy-400 text-center py-8 border border-dashed border-navy-700 rounded">No sounds uploaded yet.</div>`;
+                }
                 return;
             }
 
             const activePreset = presets.find(p => p.id === activePresetId);
 
-            sounds.forEach(sound => {
+            filteredSounds.forEach(sound => {
                 const row = document.createElement('div');
                 row.className = 'flex items-center justify-between p-4 bg-navy-800 mb-2 rounded border border-navy-700';
                 
@@ -714,7 +955,7 @@
 
                 row.innerHTML = `
                     <div class="flex-1 overflow-hidden pr-4 flex flex-col gap-1">
-                        <input type="text" class="sound-name-input bg-transparent font-semibold text-navy-100 truncate w-full border-b border-transparent focus:border-navy-400 outline-none px-1 -ml-1 transition-colors" data-id="${sound.id}" value="${sound.name}">
+                        <input type="text" class="sound-name-input bg-transparent font-semibold text-navy-100 truncate w-full border-b border-transparent focus:border-navy-400 outline-none px-1 -ml-1 transition-colors" data-id="${sound.id}" value="${escapeHtml(sound.name)}">
                         <div class="text-sm text-navy-400">Assigned Key: <span class="font-mono bg-navy-950 px-1 py-0.5 rounded border border-navy-700 ml-1 text-navy-200">${keyLabel}</span></div>
                     </div>
                     <div class="flex gap-2">
@@ -729,7 +970,7 @@
                 soundList.appendChild(row);
             });
 
-            // Attach listeners to buttons
+            // Attach listeners to buttons and inputs
             document.querySelectorAll('.sound-name-input').forEach(input => {
                 input.addEventListener('change', async (e) => {
                     const sound = sounds.find(s => s.id === e.target.dataset.id);
@@ -749,10 +990,44 @@
             });
         }
 
+        // --- Preset Selection to Clone ---
+        function renderClonePresetList() {
+            const listContainer = document.getElementById('clone-presets-list');
+            listContainer.innerHTML = '';
+            
+            presets.forEach(p => {
+                const btn = document.createElement('button');
+                btn.className = "w-full text-left px-3 py-2 bg-navy-800 hover:bg-navy-700 border border-navy-700 rounded text-sm text-navy-200 transition-all font-semibold flex justify-between items-center";
+                btn.innerHTML = `
+                    <span>${escapeHtml(p.name)}</span>
+                    <span class="text-[10px] text-navy-400 font-normal">${Object.keys(p.bindings).length} keys mapped</span>
+                `;
+                btn.addEventListener('click', async () => {
+                    addPresetModal.classList.add('hidden');
+                    await clonePresetById(p.id);
+                });
+                listContainer.appendChild(btn);
+            });
+        }
+
+        // --- Helper functions ---
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+        }
+
         // --- Actions ---
         async function handleUpload(e) {
             const files = Array.from(e.target.files);
             if (files.length === 0) return;
+
+            statusIndicator.innerText = "Uploading sounds...";
 
             const uploadPromises = files.map(file => {
                 return new Promise((resolve) => {
@@ -773,6 +1048,7 @@
 
             await Promise.all(uploadPromises);
             document.getElementById('upload-input').value = '';
+            statusIndicator.innerText = "Audio ready";
             await reloadData();
         }
 
@@ -783,16 +1059,97 @@
             const reader = new FileReader();
             reader.onload = async (ev) => {
                 const dataUrl = ev.target.result;
-                await saveSetting('bgImage', dataUrl);
-                applyBackground(dataUrl);
+                const activePreset = presets.find(p => p.id === activePresetId);
+                if (activePreset) {
+                    activePreset.bgImage = dataUrl;
+                    await savePreset(activePreset);
+                    applyBackground(dataUrl);
+                }
                 document.getElementById('bg-upload-input').value = '';
             };
             reader.readAsDataURL(file);
         }
 
         async function clearBgHandler() {
-            await deleteSetting('bgImage');
-            applyBackground(null);
+            const activePreset = presets.find(p => p.id === activePresetId);
+            if (activePreset) {
+                delete activePreset.bgImage;
+                await savePreset(activePreset);
+                applyBackground(null);
+            }
+        }
+
+        // --- ZIP Export Feature ---
+        async function exportToZip() {
+            const activePreset = presets.find(p => p.id === activePresetId);
+            if (!activePreset) {
+                statusIndicator.innerText = "Export failed: No active preset selected";
+                return;
+            }
+
+            // Extract ONLY sounds mapped to keys in the active preset configuration
+            const activeSoundIds = new Set(Object.values(activePreset.bindings));
+            const activeSounds = sounds.filter(s => activeSoundIds.has(s.id));
+
+            if (activeSounds.length === 0 && !activePreset.bgImage) {
+                statusIndicator.innerText = "Export failed: No active sounds or background inside this preset";
+                return;
+            }
+
+            statusIndicator.innerText = "Generating preset backup ZIP...";
+            try {
+                const zip = new JSZip();
+
+                // Create metadata mapping of the active preset, including assignments and bindings
+                const metadata = {
+                    exportedAt: new Date().toISOString(),
+                    activePreset: {
+                        id: activePreset.id,
+                        name: activePreset.name,
+                        bindings: activePreset.bindings
+                    },
+                    sounds: activeSounds.map(s => ({
+                        id: s.id,
+                        name: s.name
+                    }))
+                };
+
+                // Add preset configuration metadata
+                zip.file("preset_config.json", JSON.stringify(metadata, null, 2));
+
+                // Add ONLY audio assets used on the preset
+                const audioFolder = zip.folder("audio");
+                activeSounds.forEach(sound => {
+                    const commaIdx = sound.data.indexOf(',');
+                    if (commaIdx !== -1) {
+                        const base64Data = sound.data.substring(commaIdx + 1);
+                        audioFolder.file(`${sound.id}_${sound.name}`, base64Data, { base64: true });
+                    }
+                });
+
+                // Export current preset's background image if it exists
+                if (activePreset.bgImage) {
+                    const match = activePreset.bgImage.match(/^data:(image\/[a-z0-9\-+.]+);base64,(.+)$/i);
+                    if (match) {
+                        const mimeType = match[1];
+                        const base64Data = match[2];
+                        let ext = mimeType.split('/')[1] || 'png';
+                        if (ext.includes('+')) ext = ext.split('+')[0];
+                        if (ext === 'jpeg') ext = 'jpg';
+                        zip.file(`background.${ext}`, base64Data, { base64: true });
+                    }
+                }
+
+                const content = await zip.generateAsync({ type: "blob" });
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(content);
+                link.download = `soundboard_preset_${activePreset.name.replace(/\s+/g, '_')}_backup.zip`;
+                link.click();
+                statusIndicator.innerText = "Preset ZIP downloaded!";
+            } catch (err) {
+                console.error(err);
+                statusIndicator.innerText = "Error producing ZIP archive";
+            }
         }
 
         async function deleteSoundHandler(id) {
@@ -919,8 +1276,59 @@
             // Re-calibrate layout scrolling dimensions if the window is resized
             window.addEventListener('resize', initMarquees);
 
+            // Trigger Add Preset Options Overlay
+            btnAddPreset.addEventListener('click', () => {
+                if (presets.length < 10) {
+                    // Reset to Main Options Screen inside modal
+                    document.getElementById('add-preset-title').innerText = "Add Preset";
+                    document.getElementById('add-preset-options').classList.remove('hidden');
+                    document.getElementById('add-preset-clone-selector').classList.add('hidden');
+                    addPresetModal.classList.remove('hidden');
+                }
+            });
+
+            // Handle Add Preset Choices
+            btnCancelAddPreset.addEventListener('click', () => {
+                addPresetModal.classList.add('hidden');
+            });
+
+            // Option 1: Send to selector of all your presets
+            btnOptionClone.addEventListener('click', () => {
+                document.getElementById('add-preset-title').innerText = "Clone From Previous";
+                document.getElementById('add-preset-options').classList.add('hidden');
+                document.getElementById('add-preset-clone-selector').classList.remove('hidden');
+                renderClonePresetList();
+            });
+
+            // Back button inside Clone Selector
+            document.getElementById('btn-back-to-options').addEventListener('click', () => {
+                document.getElementById('add-preset-title').innerText = "Add Preset";
+                document.getElementById('add-preset-options').classList.remove('hidden');
+                document.getElementById('add-preset-clone-selector').classList.add('hidden');
+            });
+
+            // Option 2: Import from ZIP File (Upload exactly one file)
+            btnOptionImport.addEventListener('click', () => {
+                importZipInput.click();
+            });
+
+            // Option 3: Create New Set (fresh empty layout)
+            btnOptionCreate.addEventListener('click', async () => {
+                addPresetModal.classList.add('hidden');
+                await addNewPreset();
+            });
+
+            // Listen for ZIP File Import selection
+            importZipInput.addEventListener('change', async (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    addPresetModal.classList.add('hidden');
+                    await importZipPresetFile(file);
+                }
+                importZipInput.value = ''; // Reset input target
+            });
+
             // Presets Header Actions
-            btnAddPreset.addEventListener('click', addNewPreset);
             document.getElementById('btn-cancel-preset').addEventListener('click', closePresetModal);
             document.getElementById('btn-save-preset').addEventListener('click', savePresetName);
             document.getElementById('btn-delete-preset').addEventListener('click', deleteActivePreset);
@@ -932,10 +1340,26 @@
             document.getElementById('bg-upload-input').addEventListener('change', handleBgUpload);
             document.getElementById('btn-clear-bg').addEventListener('click', clearBgHandler);
 
+            // ZIP Export Trigger
+            document.getElementById('btn-export-zip').addEventListener('click', exportToZip);
+
+            // Sound Library Search Input Events
+            librarySearch.addEventListener('input', () => {
+                renderLibraryList();
+            });
+
+            btnClearSearch.addEventListener('click', () => {
+                librarySearch.value = '';
+                renderLibraryList();
+            });
+
             // UI View Toggles
             document.getElementById('btn-open-library').addEventListener('click', () => {
                 state.isLibraryOpen = true;
                 libraryView.classList.remove('hidden');
+                // Clear search term when opening library to avoid confusion
+                librarySearch.value = '';
+                renderLibraryList();
             });
 
             document.getElementById('btn-close-library').addEventListener('click', () => {
@@ -959,6 +1383,15 @@
                     return;
                 }
 
+                // 2. Check if add preset options modal is active
+                if (!addPresetModal.classList.contains('hidden')) {
+                    if (e.code === 'Escape') {
+                        e.preventDefault();
+                        addPresetModal.classList.add('hidden');
+                    }
+                    return;
+                }
+
                 // Intercept Tab for loop last played feature
                 if (e.code === 'Tab') {
                     e.preventDefault(); // Prevent focus switching
@@ -977,7 +1410,7 @@
                     return;
                 }
 
-                // 2. If currently waiting for a key bind
+                // 3. If currently waiting for a key bind
                 if (state.bindingSoundId) {
                     e.preventDefault();
                     if (e.code === 'Escape') {
@@ -988,7 +1421,7 @@
                     return;
                 }
 
-                // 3. Global Escape behavior
+                // 4. Global Escape behavior
                 if (e.code === 'Escape') {
                     if (state.isLibraryOpen) {
                         state.isLibraryOpen = false;
@@ -997,17 +1430,17 @@
                     return;
                 }
 
-                // Ignore keyboard playback if typing in an input
+                // Ignore keyboard playback if typing in an input (such as search or renaming sounds)
                 if (e.target.tagName === 'INPUT') return;
 
-                // 4. Spacebar Stops All
+                // 5. Spacebar Stops All
                 if (e.code === 'Space') {
                     e.preventDefault(); // Prevent scrolling
                     stopAll();
                     return;
                 }
 
-                // 5. Playback Routing (Only if not in library view)
+                // 6. Playback Routing (Only if not in library view)
                 if (!state.isLibraryOpen && validKeyCodes.has(e.code)) {
                     e.preventDefault(); // Prevent default browser shortcuts when playing
                     togglePlay(e.code);
